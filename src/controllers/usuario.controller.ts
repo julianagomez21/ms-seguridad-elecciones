@@ -1,30 +1,30 @@
+import {service} from '@loopback/core';
 import {
   Count,
   CountSchema,
   Filter,
   FilterExcludingWhere,
   repository,
-  Where,
+  Where
 } from '@loopback/repository';
 import {
-  post,
-  param,
-  get,
-  getModelSchemaRef,
-  patch,
-  put,
-  del,
-  requestBody,
-  response,
+  del, get,
+  getModelSchemaRef, HttpErrors, param, patch, post, put, requestBody,
+  response
 } from '@loopback/rest';
-import {Usuario} from '../models';
+import {CredencialesLogin, Usuario} from '../models';
 import {UsuarioRepository} from '../repositories';
+import {JwtService, SeguridadUsuarioService} from '../services';
 
 export class UsuarioController {
   constructor(
     @repository(UsuarioRepository)
-    public usuarioRepository : UsuarioRepository,
-  ) {}
+    public usuarioRepository: UsuarioRepository,
+    @service(SeguridadUsuarioService)
+    private servicioSeguridad: SeguridadUsuarioService,
+    @service(JwtService)
+    private servicioJWT: JwtService
+  ) { }
 
   @post('/usuarios')
   @response(200, {
@@ -44,6 +44,12 @@ export class UsuarioController {
     })
     usuario: Omit<Usuario, '_id'>,
   ): Promise<Usuario> {
+
+    let claveGenerada = this.servicioSeguridad.crearClaveAleatoria();
+    let claveCifrada = this.servicioSeguridad.cifrarCadena(claveGenerada);
+    usuario.clave = claveCifrada;
+
+    //notificar al usuario que se ha creado en el sistema (con clave generada)
     return this.usuarioRepository.create(usuario);
   }
 
@@ -147,4 +153,49 @@ export class UsuarioController {
   async deleteById(@param.path.string('id') id: string): Promise<void> {
     await this.usuarioRepository.deleteById(id);
   }
+
+  /**
+   * Bloque de metodos personalizados para la seguridad del usuario.
+   */
+
+  @post('/login')
+  @response(200, {
+    description: 'Identificacion de usuarios',
+    content: {'application/json': {schema: getModelSchemaRef(CredencialesLogin)}},
+  })
+
+  async identificar(
+    @requestBody({
+      content: {
+        'application/json': {
+          schema: getModelSchemaRef(CredencialesLogin),
+        },
+      },
+    })
+    credenciales: CredencialesLogin
+  ): Promise<string> {
+    try {
+      return await this.servicioSeguridad.identificarUsuario(credenciales);
+
+    } catch (err) {
+      throw new HttpErrors[400](`Se ha generado un error en la validacion de las credenciales para el usuario: ${credenciales.nombreUsuario}`);
+    }
+  }
+
+  @get('/validate-token/{jwt}')
+  @response(200, {
+    description: 'Validar un token JWT',
+    content: {
+      'application/json': {
+        schema: getModelSchemaRef(Object),
+      },
+    },
+  })
+  async validateJWT(
+    @param.path.string('jwt') jwt: string,
+  ): Promise<string> {
+    let valido = this.servicioJWT.validarToken(jwt);
+    return valido;
+  }
+
 }
