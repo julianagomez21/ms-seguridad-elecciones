@@ -12,7 +12,7 @@ import {
   getModelSchemaRef, HttpErrors, param, patch, post, put, requestBody,
   response
 } from '@loopback/rest';
-import {CredencialesLogin, Usuario} from '../models';
+import {CredencialesLogin, CredencialesRecuperacion, Usuario} from '../models';
 import {UsuarioRepository} from '../repositories';
 import {JwtService, SeguridadUsuarioService} from '../services';
 
@@ -50,7 +50,9 @@ export class UsuarioController {
     usuario.clave = claveCifrada;
 
     //notificar al usuario que se ha creado en el sistema (con clave generada)
-    return this.usuarioRepository.create(usuario);
+    const usuarioCreado = await this.usuarioRepository.create(usuario);
+    await this.servicioSeguridad.correoPrimerContraseña(usuario.correo, claveGenerada);
+    return usuarioCreado;
   }
 
   @get('/usuarios/count')
@@ -196,6 +198,29 @@ export class UsuarioController {
   ): Promise<string> {
     let valido = this.servicioJWT.validarToken(jwt);
     return valido;
+  }
+
+  @post('/recuperar-clave')
+  @response(200, {
+    description: 'Identificacion de usuarios',
+    content: {'application/json': {schema: getModelSchemaRef(CredencialesRecuperacion)}},
+  })
+
+  async recuperarClave(
+    @requestBody({
+      content: {
+        'application/json': {
+          schema: getModelSchemaRef(CredencialesRecuperacion),
+        },
+      },
+    })
+    credenciales: CredencialesRecuperacion
+  ): Promise<boolean> {
+    try {
+      return await this.servicioSeguridad.recuperarClave(credenciales);
+    } catch (err) {
+      throw new HttpErrors[400](`Se ha generado un error en la recuperacion de la clave para el correo: ${credenciales.correo}`);
+    }
   }
 
 }
