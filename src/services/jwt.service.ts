@@ -24,7 +24,7 @@ export class JwtService {
   }
 
   /**
-   * Se valida un token, si es correcto
+   * Se valida un token, si es correcto retorna el id del Rol del usuario
    * @param tk token a validar
    * @returns boolean con la respuesta
    */

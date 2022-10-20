@@ -200,6 +200,21 @@ export class UsuarioController {
     return valido;
   }
 
+  @get('/validate-code/{code}')
+  @response(200, {
+    description: 'Validar código',
+    content: {
+      'application/json': {
+        schema: getModelSchemaRef(Object),
+      },
+    },
+  })
+  async validateCode(
+    @param.path.string('code') codigo: string,
+  ): Promise<string> {
+    let valido = this.servicioSeguridad.validarCodigo(codigo);
+    return valido;
+  }
   @post('/recuperar-clave')
   @response(200, {
     description: 'Identificacion de usuarios',

@@ -4,11 +4,12 @@ import {HttpErrors} from '@loopback/rest';
 import fetch from 'node-fetch';
 import {Keys} from '../config/keys';
 import {CredencialesLogin, CredencialesRecuperacion} from '../models';
-import {UsuarioRepository} from '../repositories';
+import {UsuarioRepository, VerificacionCodigoRepository} from '../repositories';
 import {JwtService} from './jwt.service';
 let generator = require('generate-password');
 let MD5 = require('crypto-js/md5');
 const params = new URLSearchParams();
+const paramsSMS = new URLSearchParams();
 
 @injectable({scope: BindingScope.TRANSIENT})
 export class SeguridadUsuarioService {
@@ -16,7 +17,9 @@ export class SeguridadUsuarioService {
     @repository(UsuarioRepository)
     private usuarioRepository: UsuarioRepository,
     @service(JwtService)
-    private servicioJwt: JwtService
+    private servicioJwt: JwtService,
+    @repository(VerificacionCodigoRepository)
+    private codigoRepository: VerificacionCodigoRepository
   ) { }
 
   /**
@@ -26,29 +29,56 @@ export class SeguridadUsuarioService {
    */
   async identificarUsuario(credenciales: CredencialesLogin): Promise<string> {
     let respuesta = "";
-    let claveSinCifrar = credenciales.clave;
-    let claveCifrada = this.cifrarCadena(claveSinCifrar);
 
     const usuario = await this.usuarioRepository.findOne({
       where: {
         correo: credenciales.nombreUsuario,
-        clave: claveCifrada
+        clave: credenciales.clave
       }
     });
 
     if (usuario) {
-      const datos = {
-        nombre: `${usuario.nombres} ${usuario.apellidos}`,
-        correo: usuario.correo,
-        rol: usuario.rolId
-      }
-
       try {
-        respuesta = this.servicioJwt.crearToken(datos);
-        console.log(respuesta);
+        let codigo = this.crearCodigoAleatorio();
+        let mensaje = `¡Hola ${usuario.nombres}! <br /> Tu código de verificación es: ${codigo}`
+
+        params.append('hash_validator', 'Admin12345@notificaciones.sender');
+        params.append('destination', usuario.correo);
+        params.append('subject', Keys.mensajeAsuntoVerificacion);
+        params.append('message', mensaje);
+
+        let r = "";
+
+        console.log(params);
+        console.log(Keys.urlEnviarCorreo);
+
+        await fetch(Keys.urlEnviarCorreo, {method: 'POST', body: params}).then(async (res: any) => {
+          r = await res.text();
+        });
+
+        mensaje = `¡Hola ${usuario.nombres}! Tu código de verificación es: ${codigo}`
+        paramsSMS.append('hash_validator', 'Admin12345@notificaciones.sender');
+        paramsSMS.append('message', mensaje);
+        paramsSMS.append('destination', usuario.celular);
+
+        await fetch(Keys.urlEnviarSMS, {method: 'POST', body: paramsSMS}).then(async (res: any) => {
+          r = await res.text();
+        });
+
+        const codigoVerificacion = await this.codigoRepository.create({
+          usuarioId: usuario.correo,
+          codigo: codigo,
+          estado: false
+        });
+
+        console.log(codigoVerificacion);
+        respuesta = 'Código enviado.'
+
       } catch (err) {
         throw err;
       }
+    } else {
+      return "Las credenciales no coinciden."
     }
 
     return respuesta;
@@ -68,6 +98,20 @@ export class SeguridadUsuarioService {
 
     console.log(password);
     return password;
+  }
+
+  /**
+   * Genera un codigo aleatorio
+   * @returns codigo generado
+   */
+  crearCodigoAleatorio(): string {
+    let codigo = generator.generate({
+      length: 4,
+      numbers: true,
+    });
+
+    console.log(codigo);
+    return codigo;
   }
 
   /**
@@ -153,8 +197,52 @@ export class SeguridadUsuarioService {
       return r == "OK";
 
     } else {
-      throw new HttpErrors[400]('Error con la confirmación de la creación del usuario');
+      throw new HttpErrors[400]('Error con la confirmación de la creación del usuario.');
     }
+  }
 
+  /**
+   * Funcion para validar el codigo de usuario
+   * @param codigo tiene el codigo generado y el usuario al que pertenece
+   * @returns un JWT si el codigo es valido, si no retorna una cadena vacia
+   */
+  async validarCodigo(codigo: string): Promise<string> {
+    let respuesta = "";
+    let verificar = await this.codigoRepository.findOne({
+      where: {
+        codigo: codigo
+      }
+    });
+
+    if (verificar) {
+
+      if (verificar.estado == false) {
+        verificar.estado = true;
+        this.codigoRepository.updateById(verificar._id, verificar);
+        let usuario = await this.usuarioRepository.findOne({
+          where: {
+            correo: verificar.usuarioId
+          }
+        });
+
+        if (usuario) {
+
+          const datos = {
+            nombre: `${usuario.nombres} ${usuario.apellidos}`,
+            correo: usuario.correo,
+            rol: usuario.rolId
+          };
+
+          try {
+            respuesta = this.servicioJwt.crearToken(datos);
+          } catch (error) {
+            throw error;
+          }
+        }
+      } else {
+        respuesta = 'Código inválido.'
+      }
+    }
+    return respuesta;
   }
 }
